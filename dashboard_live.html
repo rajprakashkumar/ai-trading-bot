@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Holdings Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(140deg, #0f172a, #1e293b); min-height: 100vh; padding: 18px; }
+        .container { max-width: 1300px; margin: 0 auto; }
+        .topnav { display: flex; gap: 10px; margin-bottom: 14px; }
+        .nav-link { text-decoration: none; color: #fff; background: #334155; padding: 8px 12px; border-radius: 8px; }
+        .nav-link.active { background: #2563eb; }
+        .header { color: #fff; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+        .status { background: rgba(255,255,255,0.12); padding: 8px 12px; border-radius: 18px; }
+        .card { background: #fff; border-radius: 12px; box-shadow: 0 8px 18px rgba(0,0,0,0.15); }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-bottom: 12px; }
+        .stat-card { padding: 14px; text-align: center; }
+        .stat-label { font-size: 0.82em; color: #64748b; margin-bottom: 6px; }
+        .stat-value { font-size: 1.6em; font-weight: 700; color: #0f172a; }
+        .positive { color: #16a34a; }
+        .negative { color: #dc2626; }
+        .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+        .chart-card { padding: 14px; }
+        .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 12px; margin-bottom: 12px; }
+        .search { flex: 1; min-width: 220px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px 11px; }
+        .btn { border: none; background: #2563eb; color: #fff; border-radius: 8px; padding: 9px 12px; cursor: pointer; }
+        .meta { color: #e2e8f0; margin-bottom: 10px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+        th { background: #f8fafc; color: #334155; }
+        .table-wrap { overflow: auto; }
+        .loading { color: #fff; padding: 24px 0; text-align: center; }
+        @media (max-width: 900px) { .charts { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="topnav">
+            <a class="nav-link active" href="/">Holdings Dashboard</a>
+            <a class="nav-link" href="/market-watch">Market Watch</a>
+            <a class="nav-link" href="/token-refresh" style="background:#7f1d1d;color:#fecaca">🔐 Token</a>
+        </div>
+
+        <div class="header">
+            <div>
+                <h1>Holdings Dashboard</h1>
+                <div>Your portfolio overview</div>
+            </div>
+            <div class="status" id="statusText">Connecting...</div>
+        </div>
+
+        <div id="mainContent" style="display:none;">
+            <div class="stats" id="statsGrid"></div>
+
+            <div class="charts">
+                <div class="card chart-card">
+                    <h3>P&L Distribution</h3>
+                    <canvas id="pnlChart"></canvas>
+                </div>
+                <div class="card chart-card">
+                    <h3>Top 5 Gainers</h3>
+                    <canvas id="gainersChart"></canvas>
+                </div>
+            </div>
+
+            <div class="card controls">
+                <input class="search" type="text" id="searchBox" placeholder="Search holdings by symbol..." />
+                <button class="btn" onclick="sortTable('symbol')">Sort A-Z</button>
+                <button class="btn" onclick="sortTable('pnl')">Sort by P&L</button>
+                <button class="btn" onclick="sortTable('quantity')">Sort by Qty</button>
+                <button class="btn" onclick="refreshData(this)">Refresh</button>
+            </div>
+
+            <div class="meta"><span id="lastUpdate">Last updated: Never</span><span id="refreshCounter"></span></div>
+
+            <div class="card table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Exchange</th>
+                            <th>Qty</th>
+                            <th>Avg Price</th>
+                            <th>Current Price</th>
+                            <th>Value</th>
+                            <th>P&L</th>
+                            <th>P&L %</th>
+                            <th>Day Change %</th>
+                        </tr>
+                    </thead>
+                    <tbody id="holdingsBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="loadingScreen" class="loading">Fetching holdings...</div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5000/api';
+        let holdings = [];
+        let allHoldings = [];
+        let sortedHoldings = [];
+        let charts = {};
+        let liveStream = null;
+        let liveRenderTimer = null;
+        let currentSort = '';
+        let streamState = 'disconnected';
+        let chartsInitialized = false;
+        let tokenRetryTimer = null;     // auto-retry interval when token is expired
+        let holdingsPollingTimer = null; // regular 2-min refresh when live
+
+        function updateStatus(message) {
+            document.getElementById('statusText').textContent = message;
+        }
+
+        // ── Token expired banner with auto-retry ─────────────────────────────────
+        function showTokenBanner(refreshUrl) {
+            let banner = document.getElementById('tokenBanner');
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'tokenBanner';
+                banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#7f1d1d;color:#fecaca;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:.93em;box-shadow:0 2px 12px rgba(0,0,0,.4);flex-wrap:wrap';
+                document.body.prepend(banner);
+            }
+            let secs = 15;
+            const updateCountdown = () => { const cntEl = document.getElementById('tokenRetryCountdown'); if (cntEl) cntEl.textContent = `(auto-retry in ${secs}s)`; };
+            banner.innerHTML =
+                `<span>⚠️ <strong>Zerodha access token expired.</strong> Token refresh required to load live data. <span id="tokenRetryCountdown" style="color:#fca5a5;font-size:.88em">(auto-retry in 15s)</span></span>` +
+                `<div style="display:flex;gap:8px;flex-shrink:0">` +
+                `<button onclick="retryHoldingsNow()" style="background:#1e3a5f;color:#93c5fd;padding:8px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:700">↻ Retry Now</button>` +
+                `<a href="${refreshUrl}" style="background:#dc2626;color:#fff;padding:8px 18px;border-radius:8px;text-decoration:none;font-weight:700;white-space:nowrap">🔐 Refresh Token</a>` +
+                `</div>`;
+            banner.style.display = 'flex';
+
+            // Auto-retry every 15 seconds
+            if (tokenRetryTimer) clearInterval(tokenRetryTimer);
+            secs = 15;
+            tokenRetryTimer = setInterval(async () => {
+                secs--;
+                updateCountdown();
+                if (secs <= 0) {
+                    secs = 15;
+                    const ok = await fetchHoldings();
+                    if (ok) clearInterval(tokenRetryTimer);
+                }
+            }, 1000);
+        }
+
+        async function retryHoldingsNow() {
+            updateStatus('Retrying...');
+            await fetchHoldings();
+        }
+
+        function hideTokenBanner() {
+            const b = document.getElementById('tokenBanner');
+            if (b) b.style.display = 'none';
+            if (tokenRetryTimer) { clearInterval(tokenRetryTimer); tokenRetryTimer = null; }
+        }
+
+        function startHoldingsPolling() {
+            if (holdingsPollingTimer) clearInterval(holdingsPollingTimer);
+            holdingsPollingTimer = setInterval(async () => {
+                if (streamState !== 'connected') await fetchHoldings();
+            }, 120000); // refresh holdings every 2 min when not live-streaming
+        }
+
+        function recalcSummary() {
+            const totalValue = holdings.reduce((sum, h) => sum + (h.quantity * h.last_price), 0);
+            const totalInvested = holdings.reduce((sum, h) => sum + (h.quantity * h.average_price), 0);
+            const totalPnl = holdings.reduce((sum, h) => sum + h.pnl, 0);
+            const totalPnlPercentage = totalInvested > 0 ? (totalPnl / totalInvested) * 100 : 0;
+            return {
+                total_holdings: holdings.length,
+                total_value: totalValue,
+                total_invested: totalInvested,
+                total_pnl: totalPnl,
+                total_pnl_percentage: totalPnlPercentage,
+                gainers: holdings.filter((h) => h.pnl > 0).length,
+                losers: holdings.filter((h) => h.pnl < 0).length
+            };
+        }
+
+        function scheduleLiveRender() {
+            if (liveRenderTimer) return;
+            liveRenderTimer = setTimeout(() => {
+                liveRenderTimer = null;
+                const query = document.getElementById('searchBox').value.toUpperCase();
+                const filtered = query ? allHoldings.filter((h) => h.tradingsymbol.includes(query)) : allHoldings;
+                sortedHoldings = [...filtered];
+                if (currentSort) {
+                    sortTable(currentSort, true);
+                } else {
+                    renderTable(filtered);
+                }
+                renderStats(recalcSummary());
+                document.getElementById('lastUpdate').textContent = `Last updated: ${new Date().toLocaleTimeString()} (live)`;
+            }, 400);
+        }
+
+        function disconnectLiveStream() {
+            if (liveStream) {
+                liveStream.close();
+                liveStream = null;
+            }
+            streamState = 'disconnected';
+        }
+
+        async function subscribeHoldingsTokens(tokens) {
+            if (!tokens.length) return;
+            await fetch(`${API_URL}/stream/subscribe`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tokens })
+            });
+        }
+
+        async function connectLiveStream() {
+            const tokens = [...new Set(holdings.map((h) => Number(h.instrument_token)).filter(Boolean))];
+            if (!tokens.length) return;
+
+            disconnectLiveStream();
+            streamState = 'connecting';
+            updateStatus('Live stream connecting...');
+
+            try {
+                await subscribeHoldingsTokens(tokens);
+            } catch (_err) {
+                streamState = 'disconnected';
+                updateStatus('Live stream failed. Using periodic refresh.');
+                return;
+            }
+
+            liveStream = new EventSource(`${API_URL}/stream/ticks?tokens=${encodeURIComponent(tokens.join(','))}`);
+
+            liveStream.onopen = () => {
+                streamState = 'connected';
+                updateStatus('Live - Streaming');
+            };
+
+            liveStream.onmessage = (event) => {
+                try {
+                    const payload = JSON.parse(event.data || '{}');
+                    (payload.ticks || []).forEach((tick) => {
+                        const token = Number(tick.instrument_token);
+                        if (!token) return;
+                        const item = holdings.find((h) => Number(h.instrument_token) === token);
+                        if (!item) return;
+
+                        const lastPrice = Number(tick.last_price || item.last_price || 0);
+                        const previousClose = Number((tick.ohlc || {}).close || 0);
+
+                        item.last_price = lastPrice;
+                        item.value = item.quantity * item.last_price;
+                        item.invested = item.quantity * item.average_price;
+                        item.pnl = item.value - item.invested;
+                        item.day_change_percentage = previousClose > 0
+                            ? ((lastPrice - previousClose) / previousClose) * 100
+                            : Number(tick.change || item.day_change_percentage || 0);
+                    });
+                    scheduleLiveRender();
+                } catch (_err) {
+                }
+            };
+
+            liveStream.onerror = () => {
+                streamState = 'reconnecting';
+                updateStatus('Live stream reconnecting...');
+            };
+        }
+
+        async function fetchHoldings() {
+            try {
+                const r = await fetch(`${API_URL}/holdings`);
+                let d = null;
+                try { d = await r.json(); } catch (_) {}
+
+                // Auth / token expired
+                if (!r.ok && d && d.auth_expired) {
+                    showTokenBanner(d.refresh_url || '/token-refresh');
+                    updateStatus('⚠️ Token Expired — refresh required');
+                    document.getElementById('loadingScreen').innerHTML =
+                        '⚠️ Access token expired. <a href="/token-refresh" style="color:#60a5fa">Click here to refresh</a> or use the red banner above.';
+                    return false;
+                }
+                if (!r.ok) throw new Error(`Server returned ${r.status}: ${d?.message || ''}`);
+                if (!d || d.status !== 'success') throw new Error(d?.message || 'Failed to fetch holdings');
+
+                hideTokenBanner();
+                holdings = d.holdings;
+                allHoldings = [...holdings];
+                sortedHoldings = [...holdings];
+                updateStatus('Live - Synced');
+                document.getElementById('loadingScreen').style.display = 'none';
+                document.getElementById('mainContent').style.display = 'block';
+                renderStats(d.summary);
+                renderTable();
+                if (!chartsInitialized) {
+                    renderCharts();
+                    chartsInitialized = true;
+                }
+                document.getElementById('lastUpdate').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+                document.getElementById('refreshCounter').textContent = '';
+                await connectLiveStream();
+                startHoldingsPolling();
+                return true;
+            } catch (err) {
+                updateStatus(`Offline — ${err.message}`);
+                return false;
+            }
+        }
+
+        function renderStats(summary) {
+            const items = [
+                ['Total Holdings', `${summary.total_holdings}`],
+                ['Portfolio Value', `Rs ${summary.total_value.toFixed(0)}`],
+                ['Total Invested', `Rs ${summary.total_invested.toFixed(0)}`],
+                ['Total P&L', `Rs ${summary.total_pnl.toFixed(0)}`, summary.total_pnl >= 0 ? 'positive' : 'negative'],
+                ['P&L %', `${summary.total_pnl_percentage.toFixed(2)}%`, summary.total_pnl >= 0 ? 'positive' : 'negative'],
+                ['Gainers', `${summary.gainers}/${summary.total_holdings}`, 'positive']
+            ];
+            document.getElementById('statsGrid').innerHTML = items.map(([k, v, cls]) => `
+                <div class="card stat-card">
+                    <div class="stat-label">${k}</div>
+                    <div class="stat-value ${cls || ''}">${v}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderTable(data = holdings) {
+            document.getElementById('holdingsBody').innerHTML = data.map((h) => {
+                const value = h.quantity * h.last_price;
+                const pnlPct = h.quantity * h.average_price > 0 ? (h.pnl / (h.quantity * h.average_price)) * 100 : 0;
+                return `<tr>
+                    <td>${h.tradingsymbol}</td><td>${h.exchange}</td><td>${h.quantity}</td>
+                    <td>Rs ${h.average_price.toFixed(2)}</td><td>Rs ${h.last_price.toFixed(2)}</td><td>Rs ${value.toFixed(2)}</td>
+                    <td class="${h.pnl >= 0 ? 'positive' : 'negative'}">Rs ${h.pnl.toFixed(2)}</td>
+                    <td class="${pnlPct >= 0 ? 'positive' : 'negative'}">${pnlPct.toFixed(2)}%</td>
+                    <td class="${h.day_change_percentage >= 0 ? 'positive' : 'negative'}">${h.day_change_percentage.toFixed(2)}%</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function renderCharts() {
+            const gainers = holdings.filter((h) => h.pnl > 0).length;
+            const losers = holdings.filter((h) => h.pnl < 0).length;
+            if (charts.pnl) charts.pnl.destroy();
+            if (charts.gainers) charts.gainers.destroy();
+
+            charts.pnl = new Chart(document.getElementById('pnlChart').getContext('2d'), {
+                type: 'doughnut',
+                data: { labels: ['Gainers', 'Losers', 'Neutral'], datasets: [{ data: [gainers, losers, holdings.length - gainers - losers], backgroundColor: ['#16a34a', '#dc2626', '#94a3b8'] }] },
+                options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
+            });
+
+            const top = [...holdings].sort((a, b) => b.pnl - a.pnl).slice(0, 5);
+            charts.gainers = new Chart(document.getElementById('gainersChart').getContext('2d'), {
+                type: 'bar',
+                data: { labels: top.map((x) => x.tradingsymbol), datasets: [{ data: top.map((x) => x.pnl), backgroundColor: '#2563eb' }] },
+                options: { responsive: true, indexAxis: 'y', plugins: { legend: { display: false } } }
+            });
+        }
+
+        function sortTable(by, silent = false) {
+            currentSort = by;
+            if (by === 'symbol') sortedHoldings.sort((a, b) => a.tradingsymbol.localeCompare(b.tradingsymbol));
+            if (by === 'pnl') sortedHoldings.sort((a, b) => b.pnl - a.pnl);
+            if (by === 'quantity') sortedHoldings.sort((a, b) => b.quantity - a.quantity);
+            renderTable(sortedHoldings);
+            if (!silent) {
+                document.getElementById('lastUpdate').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+            }
+        }
+
+        document.getElementById('searchBox').addEventListener('input', (e) => {
+            const q = e.target.value.toUpperCase();
+            const filtered = allHoldings.filter((h) => h.tradingsymbol.includes(q));
+            sortedHoldings = filtered;
+            if (currentSort) {
+                sortTable(currentSort, true);
+                return;
+            }
+            renderTable(filtered);
+        });
+
+        async function refreshData(btn) {
+            btn.disabled = true;
+            await fetchHoldings();
+            btn.disabled = false;
+        }
+
+        window.addEventListener('load', async () => {
+            await fetchHoldings();
+        });
+        window.addEventListener('beforeunload', () => {
+            if (liveRenderTimer) clearTimeout(liveRenderTimer);
+            if (tokenRetryTimer) clearInterval(tokenRetryTimer);
+            if (holdingsPollingTimer) clearInterval(holdingsPollingTimer);
+            disconnectLiveStream();
+        });
+    </script>
+</body>
+</html>

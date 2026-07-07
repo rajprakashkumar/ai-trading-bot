@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zerodha Holdings Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            color: white;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+
+        .stat-card h3 {
+            color: #666;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            letter-spacing: 1px;
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .stat-value.positive {
+            color: #27ae60;
+        }
+
+        .stat-value.negative {
+            color: #e74c3c;
+        }
+
+        .stat-subtext {
+            font-size: 0.85em;
+            color: #999;
+            margin-top: 5px;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .chart-container {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+        }
+
+        .chart-title {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .search-box {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 10px 15px;
+            border: 2px solid #eee;
+            border-radius: 6px;
+            font-size: 1em;
+        }
+
+        .sort-controls button {
+            padding: 10px 15px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background 0.3s;
+        }
+
+        .sort-controls button:hover {
+            background: #764ba2;
+        }
+
+        .table-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        thead {
+            background: #f8f9fa;
+            border-bottom: 2px solid #dee2e6;
+        }
+
+        th {
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        th:hover {
+            background: #f0f0f0;
+        }
+
+        td {
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        tr:hover {
+            background: #f9f9f9;
+        }
+
+        .symbol {
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .positive {
+            color: #27ae60;
+            font-weight: 500;
+        }
+
+        .negative {
+            color: #e74c3c;
+            font-weight: 500;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: 600;
+        }
+
+        .badge.positive {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .badge.negative {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        @media (max-width: 768px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+
+            table {
+                font-size: 0.9em;
+            }
+
+            td, th {
+                padding: 10px;
+            }
+
+            .controls {
+                flex-direction: column;
+            }
+
+            .search-box {
+                width: 100%;
+            }
+
+            .sort-controls {
+                width: 100%;
+                display: flex;
+                gap: 10px;
+            }
+
+            .sort-controls button {
+                flex: 1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 Zerodha Holdings Dashboard</h1>
+            <p>Real-time portfolio overview</p>
+        </div>
+
+        <div class="stats-grid" id="statsGrid"></div>
+
+        <div class="charts-grid">
+            <div class="chart-container">
+                <div class="chart-title">P&L Distribution</div>
+                <canvas id="pnlChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <div class="chart-title">Top 5 Gainers</div>
+                <canvas id="gainersChart"></canvas>
+            </div>
+        </div>
+
+        <div class="controls">
+            <div class="search-box">
+                <input type="text" id="searchBox" placeholder="Search holdings by symbol...">
+            </div>
+            <div class="sort-controls">
+                <button onclick="sortTable('symbol')">Sort A-Z</button>
+                <button onclick="sortTable('pnl')">Sort by P&L</button>
+                <button onclick="sortTable('quantity')">Sort by Qty</button>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table id="holdingsTable">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Exchange</th>
+                        <th>Qty</th>
+                        <th>Avg Price</th>
+                        <th>Current Price</th>
+                        <th>Value</th>
+                        <th>P&L</th>
+                        <th>P&L %</th>
+                        <th>Day Change %</th>
+                    </tr>
+                </thead>
+                <tbody id="holdingsBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        const holdings = [
+            {"tradingsymbol":"ALOKINDS","exchange":"BSE","quantity":110,"average_price":22.118181,"last_price":13.21,"pnl":-979.8999099999999,"day_change_percentage":1.8504240555127232},
+            {"tradingsymbol":"AUTOBEES","exchange":"NSE","quantity":20,"average_price":159.33,"last_price":278.9,"pnl":2391.399999999999,"day_change_percentage":1.0177840559237938},
+            {"tradingsymbol":"GOLDBEES","exchange":"BSE","quantity":57,"average_price":59.021578,"last_price":117.7,"pnl":3344.670054,"day_change_percentage":1.9400658236618824},
+            {"tradingsymbol":"IRFC","exchange":"BSE","quantity":100,"average_price":21.825,"last_price":90.8,"pnl":6897.499999999999,"day_change_percentage":-0.4167580609782953},
+            {"tradingsymbol":"ITBEES","exchange":"BSE","quantity":60,"average_price":33.733333,"last_price":29.91,"pnl":-229.39998000000008,"day_change_percentage":4.434357541899439},
+            {"tradingsymbol":"JPPOWER","exchange":"NSE","quantity":286,"average_price":5.05,"last_price":17.86,"pnl":3663.66,"day_change_percentage":-0.5013927576601663},
+            {"tradingsymbol":"KALYANKJIL","exchange":"BSE","quantity":50,"average_price":69.635,"last_price":387.95,"pnl":15915.75,"day_change_percentage":1.7840745113472418},
+            {"tradingsymbol":"MANAPPURAM","exchange":"BSE","quantity":50,"average_price":186,"last_price":322.45,"pnl":6822.499999999999,"day_change_percentage":1.7192429022081983},
+            {"tradingsymbol":"NIFTYBEES","exchange":"NSE","quantity":37,"average_price":284.754324,"last_price":274.3,"pnl":-386.80998799999946,"day_change_percentage":0.5240590757503598},
+            {"tradingsymbol":"PHARMABEES","exchange":"BSE","quantity":100,"average_price":15.4,"last_price":25.98,"pnl":1058,"day_change_percentage":0.38639876352396224},
+            {"tradingsymbol":"PTL","exchange":"NSE","quantity":52,"average_price":31.8,"last_price":42.34,"pnl":548.0800000000002,"day_change_percentage":-0.02361275088547346},
+            {"tradingsymbol":"RVNL","exchange":"BSE","quantity":50,"average_price":33.9,"last_price":237,"pnl":10155,"day_change_percentage":-0.2735114664422494},
+            {"tradingsymbol":"SILVERBEES","exchange":"NSE","quantity":10,"average_price":102.6,"last_price":216.27,"pnl":1136.7000000000003,"day_change_percentage":2.3327339831551086},
+            {"tradingsymbol":"SUBEXLTD-BE","exchange":"NSE","quantity":50,"average_price":49.95,"last_price":11.36,"pnl":-1929.5000000000002,"day_change_percentage":-2.822925577416596},
+            {"tradingsymbol":"UJJIVANSFB","exchange":"BSE","quantity":103,"average_price":19.3,"last_price":61.2,"pnl":4315.700000000001,"day_change_percentage":-0.19569471624265727}
+        ];
+
+        let sortedHoldings = [...holdings];
+
+        function initDashboard() {
+            renderStats();
+            renderTable();
+            renderCharts();
+        }
+
+        function renderStats() {
+            const totalValue = holdings.reduce((sum, h) => sum + (h.quantity * h.last_price), 0);
+            const totalPnL = holdings.reduce((sum, h) => sum + h.pnl, 0);
+            const totalCost = holdings.reduce((sum, h) => sum + (h.quantity * h.average_price), 0);
+            const pnlPercent = ((totalPnL / totalCost) * 100).toFixed(2);
+            const gainersCount = holdings.filter(h => h.pnl > 0).length;
+
+            const stats = [
+                { label: 'Total Holdings', value: holdings.length + ' stocks' },
+                { label: 'Portfolio Value', value: '₹' + totalValue.toFixed(2), positive: true },
+                { label: 'Total P&L', value: '₹' + totalPnL.toFixed(2), positive: totalPnL > 0 },
+                { label: 'P&L %', value: pnlPercent + '%', positive: totalPnL > 0 },
+                { label: 'Gainers', value: gainersCount + ' / ' + holdings.length, positive: true },
+            ];
+
+            const statsGrid = document.getElementById('statsGrid');
+            statsGrid.innerHTML = stats.map(stat => `
+                <div class="stat-card">
+                    <h3>${stat.label}</h3>
+                    <div class="stat-value ${stat.positive ? 'positive' : stat.positive === false ? 'negative' : ''}">
+                        ${stat.value}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderTable(data = holdings) {
+            const tbody = document.getElementById('holdingsBody');
+            tbody.innerHTML = data.map(h => {
+                const value = (h.quantity * h.last_price).toFixed(2);
+                const pnlClass = h.pnl > 0 ? 'positive' : 'negative';
+                const dayChangeClass = h.day_change_percentage > 0 ? 'positive' : 'negative';
+                
+                return `
+                    <tr>
+                        <td><span class="symbol">${h.tradingsymbol}</span></td>
+                        <td>${h.exchange}</td>
+                        <td>${h.quantity}</td>
+                        <td>₹${h.average_price.toFixed(2)}</td>
+                        <td>₹${h.last_price.toFixed(2)}</td>
+                        <td>₹${value}</td>
+                        <td><span class="${pnlClass}">₹${h.pnl.toFixed(2)}</span></td>
+                        <td><span class="badge ${pnlClass}">${((h.pnl / (h.quantity * h.average_price)) * 100).toFixed(2)}%</span></td>
+                        <td><span class="badge ${dayChangeClass}">${h.day_change_percentage.toFixed(2)}%</span></td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function renderCharts() {
+            // P&L Distribution Chart
+            const pnlCtx = document.getElementById('pnlChart').getContext('2d');
+            const gainers = holdings.filter(h => h.pnl > 0).length;
+            const losers = holdings.filter(h => h.pnl < 0).length;
+            
+            new Chart(pnlCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Gainers', 'Losers', 'Neutral'],
+                    datasets: [{
+                        data: [gainers, losers, holdings.length - gainers - losers],
+                        backgroundColor: ['#27ae60', '#e74c3c', '#bdc3c7'],
+                        borderColor: '#fff',
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'bottom' }
+                    }
+                }
+            });
+
+            // Top 5 Gainers Chart
+            const topGainers = holdings
+                .sort((a, b) => b.pnl - a.pnl)
+                .slice(0, 5);
+
+            const gainersCtx = document.getElementById('gainersChart').getContext('2d');
+            new Chart(gainersCtx, {
+                type: 'bar',
+                data: {
+                    labels: topGainers.map(h => h.tradingsymbol),
+                    datasets: [{
+                        label: 'P&L (₹)',
+                        data: topGainers.map(h => h.pnl),
+                        backgroundColor: '#667eea',
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    indexAxis: 'y',
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            grid: { color: '#eee' }
+                        }
+                    }
+                }
+            });
+        }
+
+        function sortTable(by) {
+            if (by === 'symbol') {
+                sortedHoldings.sort((a, b) => a.tradingsymbol.localeCompare(b.tradingsymbol));
+            } else if (by === 'pnl') {
+                sortedHoldings.sort((a, b) => b.pnl - a.pnl);
+            } else if (by === 'quantity') {
+                sortedHoldings.sort((a, b) => b.quantity - a.quantity);
+            }
+            renderTable(sortedHoldings);
+        }
+
+        document.getElementById('searchBox').addEventListener('input', (e) => {
+            const search = e.target.value.toUpperCase();
+            const filtered = holdings.filter(h => h.tradingsymbol.includes(search));
+            renderTable(filtered);
+        });
+
+        initDashboard();
+    </script>
+</body>
+</html>
