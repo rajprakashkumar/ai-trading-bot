@@ -49,18 +49,25 @@ except ImportError:
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# Try to load credentials from config
+# Try to load credentials from config or environment
 try:
     from kite_config import API_KEY, API_SECRET, ACCESS_TOKEN, USER_ID
     CREDENTIALS_LOADED = API_KEY != "your_api_key_here" and ACCESS_TOKEN != "your_access_token_here"
     if CREDENTIALS_LOADED:
-        print(f"✅ Kite credentials loaded (API Key: {API_KEY[:10]}...)")
+        print(f"✅ Kite credentials loaded from kite_config.py (API Key: {API_KEY[:10]}...)")
     else:
         print("⚠️ Kite credentials not configured in kite_config.py")
 except ImportError:
-    CREDENTIALS_LOADED = False
-    API_KEY = ACCESS_TOKEN = USER_ID = None
-    print("⚠️ kite_config.py not found")
+    # Fall back to environment variables (for Docker/Render deployment)
+    API_KEY = os.getenv('API_KEY')
+    API_SECRET = os.getenv('API_SECRET')
+    ACCESS_TOKEN = os.getenv('ACCESS_TOKEN')
+    USER_ID = os.getenv('USER_ID')
+    CREDENTIALS_LOADED = bool(API_KEY and API_SECRET and ACCESS_TOKEN and USER_ID)
+    if CREDENTIALS_LOADED:
+        print(f"✅ Kite credentials loaded from environment variables (API Key: {API_KEY[:10]}...)")
+    else:
+        print("⚠️ kite_config.py not found and no environment variables set")
 
 # Initialize Kite object
 kite = None
