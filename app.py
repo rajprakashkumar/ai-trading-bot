@@ -50,6 +50,7 @@ except ImportError:
 IST = timezone(timedelta(hours=5, minutes=30))
 
 # Try to load credentials from config or environment
+print("📍 Starting credential loading...")
 try:
     from kite_config import API_KEY, API_SECRET, ACCESS_TOKEN, USER_ID
     CREDENTIALS_LOADED = API_KEY != "your_api_key_here" and ACCESS_TOKEN != "your_access_token_here"
@@ -57,7 +58,8 @@ try:
         print(f"✅ Kite credentials loaded from kite_config.py (API Key: {API_KEY[:10]}...)")
     else:
         print("⚠️ Kite credentials not configured in kite_config.py")
-except ImportError:
+except ImportError as e:
+    print(f"📍 kite_config.py import failed: {e}")
     # Fall back to environment variables (for Docker/Render deployment)
     API_KEY = os.getenv('API_KEY')
     API_SECRET = os.getenv('API_SECRET')
@@ -67,18 +69,24 @@ except ImportError:
     if CREDENTIALS_LOADED:
         print(f"✅ Kite credentials loaded from environment variables (API Key: {API_KEY[:10]}...)")
     else:
-        print("⚠️ kite_config.py not found and no environment variables set")
+        print("⚠️ No credentials available (no kite_config.py and no environment variables)")
+print("📍 Credential loading complete")
 
 # Initialize Kite object
+print("📍 Initializing Kite object...")
 kite = None
 if KITECONNECT_AVAILABLE and CREDENTIALS_LOADED:
     try:
+        print(f"📍 Creating KiteConnect with API_KEY={API_KEY[:10]}...")
         kite = KiteConnect(api_key=API_KEY)
         kite.set_access_token(ACCESS_TOKEN)
         print("✅ Kite API initialized successfully")
     except Exception as e:
         print(f"❌ Error initializing Kite API: {e}")
         kite = None
+else:
+    print(f"📍 Skipping Kite init: KITECONNECT_AVAILABLE={KITECONNECT_AVAILABLE}, CREDENTIALS_LOADED={CREDENTIALS_LOADED}")
+print("📍 Kite initialization complete")
 
 # ── Token management ────────────────────────────────────────────────────────
 
