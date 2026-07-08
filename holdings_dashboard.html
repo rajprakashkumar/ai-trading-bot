@@ -24,6 +24,42 @@
             margin: 0 auto;
         }
 
+        .topnav {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .nav-link {
+            display: inline-block;
+            text-decoration: none;
+            color: white;
+            background: rgba(255, 255, 255, 0.2);
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .nav-link:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .nav-link.active {
+            background: rgba(255, 255, 255, 0.5);
+            font-weight: 600;
+        }
+
+        .nav-link.token-btn {
+            background: rgba(255, 100, 100, 0.3);
+        }
+
+        .nav-link.token-btn:hover {
+            background: rgba(255, 100, 100, 0.5);
+        }
+
         .header {
             color: white;
             margin-bottom: 30px;
@@ -256,6 +292,12 @@
 </head>
 <body>
     <div class="container">
+        <div class="topnav">
+            <a class="nav-link active" href="/">Home</a>
+            <a class="nav-link" href="/market-watch">Market Watch</a>
+            <a class="nav-link token-btn" href="/token-refresh">🔐 Token Refresh</a>
+        </div>
+
         <div class="header">
             <h1>📊 Zerodha Holdings Dashboard</h1>
             <p>Real-time portfolio overview</p>

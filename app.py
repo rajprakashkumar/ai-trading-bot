@@ -6,8 +6,12 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
     except Exception:
         pass
 
-from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
-from flask_cors import CORS
+from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context, redirect
+try:
+    from flask_cors import CORS
+    CORS_AVAILABLE = True
+except ImportError:
+    CORS_AVAILABLE = False
 import json
 import os
 import re
@@ -21,7 +25,16 @@ from datetime import datetime, timedelta, timezone
 from threading import Lock
 
 app = Flask(__name__)
-CORS(app)
+if CORS_AVAILABLE:
+    CORS(app)
+else:
+    # Add CORS headers manually if flask_cors not available
+    @app.after_request
+    def add_cors_headers(response):
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return response
 
 INSTRUMENTS_CACHE = {
     'loaded': False,
@@ -93,21 +106,19 @@ print("📍 Kite initialization complete")
 TOKEN_VALID = None  # None=unchecked, True=valid, False=expired
 
 def check_token_valid():
-    """Check if the current access token works. Caches result."""
+    """Check if the current access token works. Always re-validates (no caching)."""
     global TOKEN_VALID
     if kite is None:
-        TOKEN_VALID = False
         return False
     try:
+        # Always re-check by calling kite.profile()
         kite.profile()
-        TOKEN_VALID = True
         return True
     except Exception as e:
         msg = str(e).lower()
         if any(k in msg for k in ('token', 'session', 'invalid', '403', 'unauthori', 'access')):
-            TOKEN_VALID = False
             return False
-        TOKEN_VALID = True   # other error (network) - don't mark expired
+        # Other error (network) - don't mark as expired
         return True
 
 def refresh_kite_token(request_token):
@@ -144,24 +155,47 @@ def refresh_kite_token(request_token):
 # ── Token routes ─────────────────────────────────────────────────────────────
 
 @app.route('/token-callback')
+@app.route('/')  # Handle root URL with parameters too
 def token_callback():
     """Auto-capture request_token from Zerodha redirect."""
+    # Handle both callback formats:
+    # 1. /token-callback?request_token=XXX&status=success
+    # 2. /?action=login&type=login&status=success&request_token=XXX
     req_token = request.args.get('request_token', '').strip()
-    status    = request.args.get('status', '')
-    if status != 'success' or not req_token:
+    status    = request.args.get('status', '').strip()
+    
+    # If no request_token but status is success, show dashboard
+    if not req_token and status == 'success':
+        return redirect('/market_watch.html')
+    
+    # If request_token exists, exchange it automatically
+    if req_token and status == 'success':
+        try:
+            new_token, uid = refresh_kite_token(req_token)
+            return ('<html><head><meta http-equiv="refresh" content="2;url=/market_watch.html"/></head>'
+                    f'<body style="font-family:sans-serif;padding:40px;background:#0f172a;color:#e2e8f0;text-align:center">'
+                    f'<h2 style="color:#4ade80">✅ Token Exchanged Successfully!</h2>'
+                    f'<p>User: <b>{uid}</b></p>'
+                    f'<p>Token expires at midnight IST</p>'
+                    f'<p>Redirecting to dashboard in 2 seconds...</p></body></html>')
+        except Exception as e:
+            print(f"❌ Token exchange error: {e}")
+            return (f'<html><body style="font-family:sans-serif;padding:40px;background:#0f172a;color:#e2e8f0">'
+                    f'<h2 style="color:#ef4444">❌ Token Exchange Failed</h2>'
+                    f'<p><b>Error:</b> {str(e)}</p>'
+                    f'<a href="/token-refresh" style="color:#60a5fa;text-decoration:none;border:1px solid #60a5fa;padding:8px 16px;border-radius:6px;display:inline-block">Try Again</a>'
+                    f'</body></html>'), 400
+    
+    # If status is not success, show error
+    if status != 'success':
         return (f'<html><body style="font-family:sans-serif;padding:40px;background:#0f172a;color:#e2e8f0">'
-                f'<h2 style="color:#ef4444">Login failed (status={status})</h2>'
-                f'<a href="/token-refresh" style="color:#60a5fa">Try again</a></body></html>'), 400
-    try:
-        _, uid = refresh_kite_token(req_token)
-        return ('<html><head><meta http-equiv="refresh" content="2;url=/"/></head>'
-                f'<body style="font-family:sans-serif;padding:40px;background:#0f172a;color:#e2e8f0;text-align:center">'
-                f'<h2 style="color:#4ade80">✅ Token refreshed for {uid}</h2>'
-                f'<p>Redirecting to dashboard...</p></body></html>')
-    except Exception as e:
-        return (f'<html><body style="font-family:sans-serif;padding:40px;background:#0f172a;color:#e2e8f0">'
-                f'<h2 style="color:#ef4444">❌ Token exchange failed</h2><p>{e}</p>'
-                f'<a href="/token-refresh" style="color:#60a5fa">Try again</a></body></html>'), 400
+                f'<h2 style="color:#ef4444">❌ Login Failed</h2>'
+                f'<p><b>Status:</b> {status or "unknown"}</p>'
+                f'<a href="/token-refresh" style="color:#60a5fa;text-decoration:none;border:1px solid #60a5fa;padding:8px 16px;border-radius:6px;display:inline-block">Try Again</a>'
+                f'</body></html>'), 400
+    
+    # Default: show dashboard
+    return redirect('/market_watch.html')
 
 @app.route('/token-refresh')
 def token_refresh_page():
@@ -698,10 +732,43 @@ def dashboard():
 def market_watch():
     """Serve market watch page"""
     return send_from_directory('.', 'market_watch.html')
+
+@app.route('/holdings-dashboard')
+@app.route('/holdings_dashboard.html')
+@app.route('/holdings_dashboard')
+@app.route('/holdings-dashboard.html')
+def holdings_dashboard():
+    """Serve holdings dashboard page"""
+    return send_from_directory('.', 'holdings_dashboard.html')
+
 @app.route('/api/health', methods=['GET'])
 def health():
     """Health check endpoint"""
     return jsonify({'status': 'ok', 'timestamp': datetime.now().isoformat()})
+
+@app.route('/api/upload-file', methods=['POST'])
+def upload_file_endpoint():
+    """Temporary endpoint to upload HTML files"""
+    try:
+        data = request.get_json()
+        filename = data.get('filename', '')
+        content = data.get('content', '')
+        
+        if not filename or not content:
+            return jsonify({'error': 'Missing filename or content'}), 400
+        
+        # Security: only allow specific files
+        allowed_files = ['market_watch.html', 'holdings_dashboard.html', 'dashboard_live.html']
+        if filename not in allowed_files:
+            return jsonify({'error': 'File not allowed'}), 403
+        
+        # Write file
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        return jsonify({'status': 'ok', 'message': f'Uploaded {filename}'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/search/<query>', methods=['GET'])
 
@@ -741,12 +808,34 @@ def api_suggest(query):
             return jsonify({'status': 'error', 'message': 'Instrument cache unavailable'}), 500
 
         # ── Token dictionaries ─────────────────────────────────────────────────
-        INDEX_MAP = {
-            'NIFTY': 'NIFTY',       'NIFTY50': 'NIFTY',
-            'BANKNIFTY': 'BANKNIFTY', 'BANK': 'BANKNIFTY',
-            'FINNIFTY': 'FINNIFTY',  'FIN': 'FINNIFTY',
+        DERIVATIVE_ALIASES = {
+            'NIFTY 50': ['NIFTY', 'NIFTY50'],
+            'NIFTY BANK': ['BANKNIFTY'],
+            'NIFTY FIN SERVICE': ['FINNIFTY'],
+            'NIFTY MIDCAP 50': ['MIDCPNIFTY'],
+            'SENSEX': ['SENSEX'],
+        }
+        TOKEN_ROOT_ALIASES = {
+            'NIFTY': ['NIFTY', 'NIFTY50'],
+            'NIFTY50': ['NIFTY', 'NIFTY50'],
+            'BANKNIFTY': ['BANKNIFTY'],
+            'BANK': ['BANKNIFTY'],
+            'FINNIFTY': ['FINNIFTY'],
+            'FIN': ['FINNIFTY'],
+            'MIDCPNIFTY': ['MIDCPNIFTY'],
+            'MIDCAP': ['MIDCPNIFTY'],
+            'SENSEX': ['SENSEX'],
+        }
+        ROOT_TOKEN_TO_INDEX = {
+            'NIFTY': 'NIFTY 50',
+            'NIFTY50': 'NIFTY 50',
+            'BANKNIFTY': 'NIFTY BANK',
+            'BANK': 'NIFTY BANK',
+            'FINNIFTY': 'NIFTY FIN SERVICE',
+            'FIN': 'NIFTY FIN SERVICE',
+            'MIDCPNIFTY': 'NIFTY MIDCAP 50',
+            'MIDCAP': 'NIFTY MIDCAP 50',
             'SENSEX': 'SENSEX',
-            'MIDCPNIFTY': 'MIDCPNIFTY', 'MIDCAP': 'MIDCPNIFTY',
         }
         # month word → (3-letter abbrev, 2-digit number for expiry column)
         MONTH_MAP = {
@@ -769,41 +858,154 @@ def api_suggest(query):
         strike     = None
         month_num  = None   # '07' etc. for expiry column match
         day        = None   # 1–31 for expiry day
+        search_ts = []
+        nfo_search_names = []
 
-        # Check multi-word index names first ("bank nifty", "fin nifty")
-        MULTI_WORD = [
-            ('BANK NIFTY', 'BANKNIFTY'),
-            ('FIN NIFTY',  'FINNIFTY'),
-            ('MIDCAP NIFTY', 'MIDCPNIFTY'),
-        ]
-        remaining = q.upper()
-        for phrase, mapped in MULTI_WORD:
-            if phrase in remaining:
-                index_name = mapped
-                remaining = remaining.replace(phrase, ' ')
-                break
-
-        for token in remaining.split():
+        tokens_upper = []
+        for token in q.upper().split():
             token = token.strip('.,/-')
             if not token:
                 continue
-            if not index_name and token in INDEX_MAP:
-                index_name = INDEX_MAP[token]
-            elif token in MONTH_MAP:
+            tokens_upper.append(token)
+            if token in MONTH_MAP:
                 _, month_num = MONTH_MAP[token]
             elif re.match(r'^\d{4,6}$', token):
                 strike = float(token)
             elif re.match(r'^\d{1,2}$', token) and 1 <= int(token) <= 31:
                 day = int(token)
 
+        is_derivative_query = (strike is not None) or (month_num is not None) or (day is not None)
+
+        # CSV-driven index detection: match query to NSE/BSE index rows.
+        if PANDAS_AVAILABLE and INSTRUMENTS_DF is not None:
+            q_up = q.upper()
+            q_norm = re.sub(r'[^A-Z0-9]+', '', q_up)
+            alpha_tokens = [t for t in tokens_upper if not re.match(r'^\d+$', t)]
+
+            idx_mask = INSTRUMENTS_DF['exchange'].isin(['NSE', 'BSE'])
+            if 'segment' in INSTRUMENTS_DF.columns:
+                idx_mask = idx_mask & INSTRUMENTS_DF['segment'].fillna('').astype(str).str.upper().eq('INDICES')
+            elif 'instrument_type' in INSTRUMENTS_DF.columns:
+                idx_mask = idx_mask & INSTRUMENTS_DF['instrument_type'].fillna('').astype(str).str.upper().eq('EQ')
+
+            index_df = INSTRUMENTS_DF.loc[idx_mask, ['tradingsymbol', 'name', 'exchange']].copy()
+            if len(index_df) > 0:
+                index_df['ts_up'] = index_df['tradingsymbol'].fillna('').astype(str).str.upper()
+                index_df['name_up'] = index_df['name'].fillna('').astype(str).str.upper()
+                index_df['ts_norm'] = index_df['ts_up'].str.replace(r'[^A-Z0-9]+', '', regex=True)
+                index_df['name_norm'] = index_df['name_up'].str.replace(r'[^A-Z0-9]+', '', regex=True)
+
+                def _score_index_row(row):
+                    score = 0
+                    if q_norm:
+                        if row['ts_norm'] == q_norm or row['name_norm'] == q_norm:
+                            score += 300
+                        if row['ts_norm'].startswith(q_norm) or row['name_norm'].startswith(q_norm):
+                            score += 180
+                        if q_norm in row['ts_norm'] or q_norm in row['name_norm']:
+                            score += 120
+                    if q_up and (q_up in row['ts_up'] or q_up in row['name_up']):
+                        score += 60
+                    for tok in alpha_tokens:
+                        if tok in row['ts_up'] or tok in row['name_up']:
+                            score += 25
+                    return score
+
+                index_df['score'] = index_df.apply(_score_index_row, axis=1)
+                matched = index_df[index_df['score'] > 0].sort_values(
+                    by=['score', 'exchange', 'name_up'], ascending=[False, True, True]
+                )
+
+                if len(matched) > 0:
+                    best = matched.iloc[0]
+                    index_name = str(best['name'])
+
+                    # Include all strong matches for broad index queries.
+                    top_score = matched.iloc[0]['score']
+                    strong = matched.head(10) if top_score < 120 else matched[matched['score'] >= max(120, top_score - 40)].head(10)
+
+                    ts_set = set()
+                    nfo_set = set()
+                    for _, m in strong.iterrows():
+                        ts = str(m['tradingsymbol']).strip()
+                        nm = str(m['name']).strip()
+                        if ts:
+                            ts_set.add(ts)
+                        if nm:
+                            ts_set.add(nm)
+                        for alias in DERIVATIVE_ALIASES.get(nm, []):
+                            nfo_set.add(alias)
+                        for alias in DERIVATIVE_ALIASES.get(ts, []):
+                            nfo_set.add(alias)
+
+                    search_ts = sorted(ts_set)
+                    nfo_search_names = sorted(nfo_set)
+
+        # Backward-compatible fallback for common derivative roots.
+        if not index_name:
+            fallback_map = {
+                'NIFTY': ('NIFTY 50', ['NIFTY 50'], ['NIFTY', 'NIFTY50']),
+                'NIFTY50': ('NIFTY 50', ['NIFTY 50'], ['NIFTY', 'NIFTY50']),
+                'BANKNIFTY': ('NIFTY BANK', ['NIFTY BANK'], ['BANKNIFTY']),
+                'BANK': ('NIFTY BANK', ['NIFTY BANK'], ['BANKNIFTY']),
+                'FINNIFTY': ('NIFTY FIN SERVICE', ['NIFTY FIN SERVICE'], ['FINNIFTY']),
+                'FIN': ('NIFTY FIN SERVICE', ['NIFTY FIN SERVICE'], ['FINNIFTY']),
+                'MIDCPNIFTY': ('NIFTY MIDCAP 50', ['NIFTY MIDCAP 50'], ['MIDCPNIFTY']),
+                'MIDCAP': ('NIFTY MIDCAP 50', ['NIFTY MIDCAP 50'], ['MIDCPNIFTY']),
+                'SENSEX': ('SENSEX', ['SENSEX'], ['SENSEX']),
+            }
+            for token in tokens_upper:
+                if token in fallback_map:
+                    index_name, search_ts, nfo_search_names = fallback_map[token]
+                    break
+
+        # Option/future intent: force a single derivative root from tokens.
+        if is_derivative_query:
+            preferred_root = next((t for t in tokens_upper if t in ROOT_TOKEN_TO_INDEX), None)
+            if preferred_root:
+                index_name = ROOT_TOKEN_TO_INDEX[preferred_root]
+                search_ts = [index_name]
+
+            forced_nfo_roots = set(x for x in nfo_search_names if x)
+            for token in tokens_upper:
+                for alias in TOKEN_ROOT_ALIASES.get(token, []):
+                    forced_nfo_roots.add(alias)
+
+            # Also derive from chosen index_name when available.
+            for alias in DERIVATIVE_ALIASES.get(index_name or '', []):
+                forced_nfo_roots.add(alias)
+
+            if forced_nfo_roots:
+                nfo_search_names = sorted(forced_nfo_roots)
+
         df_result = None
 
         # ── Structured NFO filter (if index found) ────────────────────────────
         if PANDAS_AVAILABLE and INSTRUMENTS_DF is not None and index_name:
-            nfo  = INSTRUMENTS_DF[
-                (INSTRUMENTS_DF['exchange'] == 'NFO') &
-                (INSTRUMENTS_DF['name'] == index_name)
-            ]
+            search_ts_up = [x.upper() for x in search_ts if x]
+            nfo_search_up = [x.upper() for x in nfo_search_names if x]
+
+            # Include index rows directly from NSE/BSE index universe.
+            index_eq_mask = INSTRUMENTS_DF['exchange'].isin(['NSE', 'BSE'])
+            if 'segment' in INSTRUMENTS_DF.columns:
+                index_eq_mask = index_eq_mask & INSTRUMENTS_DF['segment'].fillna('').astype(str).str.upper().eq('INDICES')
+            if search_ts_up:
+                index_eq_mask = index_eq_mask & (
+                    INSTRUMENTS_DF['tradingsymbol'].fillna('').astype(str).str.upper().isin(search_ts_up) |
+                    INSTRUMENTS_DF['name'].fillna('').astype(str).str.upper().isin(search_ts_up)
+                )
+            index_eq = INSTRUMENTS_DF[index_eq_mask]
+
+            # NFO lookup uses derivative aliases (NIFTY/BANKNIFTY/FINNIFTY, etc.).
+            if nfo_search_up:
+                nfo = INSTRUMENTS_DF[
+                    (INSTRUMENTS_DF['exchange'] == 'NFO') & (
+                        INSTRUMENTS_DF['tradingsymbol'].fillna('').astype(str).str.upper().isin(nfo_search_up) |
+                        INSTRUMENTS_DF['name'].fillna('').astype(str).str.upper().isin(nfo_search_up)
+                    )
+                ]
+            else:
+                nfo = INSTRUMENTS_DF.iloc[0:0]
             # Filter by strike (options only, since futures have strike=0)
             if strike is not None:
                 nfo = nfo[nfo['strike'] == strike]
@@ -816,12 +1018,22 @@ def api_suggest(query):
             if day is not None:
                 nfo = nfo[nfo['expiry'].str.endswith(f'-{day:02d}')]
 
-            # Sort: futures first (is_future desc), then by expiry and strike
-            nfo['is_future'] = (nfo['instrument_type'] == 'FUT').astype(int)
-            df_result = nfo.sort_values(
-                by=['is_future', 'expiry', 'strike', 'instrument_type'],
-                ascending=[False, True, True, True]
-            ).drop('is_future', axis=1).head(200)
+            # Sort: index first, then futures first (is_future desc), then by expiry and strike
+            # Add sorting priority: 0 for index EQ, 1 for futures, 2 for options
+            def sort_priority(row):
+                if row['exchange'] == 'NSE':
+                    return 0  # Index first
+                elif row['instrument_type'] == 'FUT':
+                    return 1  # Futures second
+                else:
+                    return 2  # Options last
+            
+            combined = pd.concat([index_eq, nfo], ignore_index=True)
+            combined['sort_key'] = combined.apply(sort_priority, axis=1)
+            df_result = combined.sort_values(
+                by=['sort_key', 'expiry', 'strike', 'instrument_type'],
+                ascending=[True, True, True, True]
+            ).drop('sort_key', axis=1).head(200)
 
         # ── Substring fallback (no index identified, or index found nothing) ──
         if PANDAS_AVAILABLE and INSTRUMENTS_DF is not None and (df_result is None or len(df_result) == 0):
